@@ -67,5 +67,31 @@ app.use('/api/profile', profileRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api/resume', resumeRoutes);
 
+app.use((error, _req, res, _next) => {
+  if (error?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({
+      success: false,
+      message: 'Resume PDF exceeds the 5 MB upload limit.',
+    });
+  }
+
+  if (error?.message === 'Only PDF files are allowed') {
+    return res.status(415).json({
+      success: false,
+      message: error.message,
+    });
+  }
+
+  console.error('[http] unhandled request error', {
+    errorName: error?.name || 'Error',
+    message: error?.message || 'Unknown error',
+  });
+
+  return res.status(500).json({
+    success: false,
+    message: 'Request could not be completed.',
+  });
+});
+
 
 export default app;

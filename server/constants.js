@@ -2,6 +2,8 @@ export const DEFAULT_MAX_RESUME_FILE_SIZE_BYTES = 5 * 1024 * 1024;
 export const DEFAULT_MAX_RESUME_TEXT_CHARS = 18000;
 export const DEFAULT_MAX_JOB_DESCRIPTION_CHARS = 12000;
 export const DEFAULT_MAX_CHAT_MESSAGE_CHARS = 4000;
+export const DEFAULT_GROQ_REQUEST_TIMEOUT_MS = 35000;
+export const DEFAULT_ANALYSIS_TIMEOUT_MS = 90000;
 
 export const MAX_RESUME_FILE_SIZE_BYTES = Number(
   process.env.MAX_RESUME_FILE_SIZE_BYTES || DEFAULT_MAX_RESUME_FILE_SIZE_BYTES,
@@ -14,6 +16,12 @@ export const MAX_JOB_DESCRIPTION_CHARS = Number(
 );
 export const MAX_CHAT_MESSAGE_CHARS = Number(
   process.env.MAX_CHAT_MESSAGE_CHARS || DEFAULT_MAX_CHAT_MESSAGE_CHARS,
+);
+export const GROQ_REQUEST_TIMEOUT_MS = Number(
+  process.env.GROQ_REQUEST_TIMEOUT_MS || DEFAULT_GROQ_REQUEST_TIMEOUT_MS,
+);
+export const ANALYSIS_TIMEOUT_MS = Number(
+  process.env.ANALYSIS_TIMEOUT_MS || DEFAULT_ANALYSIS_TIMEOUT_MS,
 );
 
 export const GENERIC_PHRASES = [
@@ -173,7 +181,7 @@ ROLE READINESS LOGIC
 ━━━━━━━━━━━━━━━━━━━
 NEXT STEPS RULE
 ━━━━━━━━━━━━━━━━━━━
-- Provide a clear roadmap (3 to 5 steps)
+- Provide exactly 5 clear roadmap steps
 - Should feel like a plan, not advice
 
 ━━━━━━━━━━━━━━━━━━━

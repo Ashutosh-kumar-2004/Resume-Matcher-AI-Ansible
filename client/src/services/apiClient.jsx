@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const normalizeApiBaseUrl = (rawUrl) => {
-  const fallback = "http://localhost:5000/api";
+  const fallback = import.meta.env.PROD ? "/api" : "http://localhost:5000/api";
 
   if (!rawUrl || typeof rawUrl !== "string") {
     return fallback;
@@ -35,6 +35,7 @@ const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 const apiClient = axios.create({
   baseURL: apiBaseUrl,
   withCredentials: true,
+  timeout: 125000,
 });
 
 export default apiClient;

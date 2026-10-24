@@ -9,10 +9,156 @@ import apiClient from "../../services/apiClient";
 const MAX_CHATS_PER_USER = 10;
 const MAX_FILES_PER_CHAT = 10;
 
+const normalizeNextSteps = (steps) =>
+  steps.flatMap((step) => {
+    const text = String(step ?? "").trim();
+    if (!text) {
+      return [];
+    }
+
+    const parts = text.split(/\s+(?=\d+[.)]\s)/);
+    return parts.length > 1
+      ? parts.map((part) => part.replace(/^\d+[.)]\s*/, "").trim()).filter(Boolean)
+      : [text.replace(/^\d+[.)]\s*/, "").trim()];
+  });
+
+const ChatComposer = ({
+  isChatView,
+  isSending,
+  isFileLimitReached,
+  fileInputRef,
+  onFilePickerOpen,
+  onFileSelect,
+  renderSelectedFileChip,
+  onSubmit,
+}) => {
+  const [prompt, setPrompt] = useState("");
+  const promptTextareaRef = useRef(null);
+
+  const autoResizePromptTextarea = (textarea) => {
+    if (!textarea) {
+      return;
+    }
+
+    const maxHeight = 84;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  };
+
+  const handleSubmit = async (event) => {
+    const submitted = await onSubmit(event, prompt);
+    if (submitted) {
+      setPrompt("");
+    }
+  };
+
+  const composerForm = isChatView ? (
+    <form
+      onSubmit={handleSubmit}
+      className="sticky bottom-0 mt-4 flex w-full items-center rounded-full border border-gray-200/90 bg-white/90 px-4 py-2 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)] backdrop-blur-md dark:border-white/10 dark:bg-white/8 sm:px-5 sm:py-3"
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        onChange={onFileSelect}
+        className="hidden"
+      />
+
+      <button
+        type="button"
+        onClick={onFilePickerOpen}
+        className="mr-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-700 transition hover:bg-gray-100 dark:text-white/90 dark:hover:bg-white/10"
+        aria-label="Add"
+        title="Attach File"
+      >
+        <IoAdd size={24} />
+      </button>
+
+      {renderSelectedFileChip()}
+
+      <textarea
+        ref={promptTextareaRef}
+        value={prompt}
+        onChange={(event) => {
+          setPrompt(event.target.value);
+          autoResizePromptTextarea(event.target);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            if (!isSending) {
+              event.currentTarget.closest("form").requestSubmit();
+            }
+          }
+        }}
+        placeholder="Type your message"
+        rows={1}
+        className="max-h-21 min-h-10 flex-1 resize-none overflow-y-auto bg-transparent py-2 text-base leading-6 text-gray-800 placeholder:text-gray-500 focus:outline-none dark:text-white/90 dark:placeholder:text-white/45"
+      />
+
+      <button
+        type="submit"
+        className="ml-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-r from-purple-500 to-blue-500 text-white transition hover:from-purple-600 hover:to-blue-600 disabled:opacity-60"
+        aria-label="Send"
+        disabled={isSending}
+        title="Send Message"
+      >
+        <IoSend size={18} />
+      </button>
+    </form>
+  ) : (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-8 flex w-full items-center rounded-full border border-gray-200/80 bg-white/85 px-4 py-2 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)] backdrop-blur-md dark:border-white/10 dark:bg-white/8"
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        onChange={onFileSelect}
+        className="hidden"
+      />
+      <button
+        type="button"
+        onClick={onFilePickerOpen}
+        className="mr-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-700 transition hover:bg-gray-100 dark:text-white/90 dark:hover:bg-white/10"
+        aria-label="Add"
+        title="Attach File"
+      >
+        <IoAdd size={24} />
+      </button>
+      {renderSelectedFileChip()}
+      <textarea
+        ref={promptTextareaRef}
+        value={prompt}
+        onChange={(event) => {
+          setPrompt(event.target.value);
+          autoResizePromptTextarea(event.target);
+        }}
+        placeholder="Check resume, Analyse resume, Give job description"
+        rows={1}
+        className="max-h-21 min-h-10 flex-1 resize-none overflow-y-auto bg-transparent py-2 text-base leading-6 text-gray-800 placeholder:text-gray-500 focus:outline-none dark:text-white/90 dark:placeholder:text-white/45"
+      />
+      <button
+        type="submit"
+        className="ml-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-r from-purple-500 to-blue-500 text-white transition hover:from-purple-600 hover:to-blue-600"
+        aria-label="Send"
+        title="Send Message"
+      >
+        <IoSend size={18} />
+      </button>
+    </form>
+  );
+
+  return isFileLimitReached ? null : composerForm;
+};
+
 const Dashboard = () => {
   const { chatId } = useParams();
   const isChatView = Boolean(chatId);
-  const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState([]);
   const [isSending, setIsSending] = useState(false);
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -23,10 +169,10 @@ const Dashboard = () => {
   const [typingMessageId, setTypingMessageId] = useState("");
   const [typingCharCount, setTypingCharCount] = useState(0);
   const fileInputRef = useRef(null);
-  const promptTextareaRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const animatedAssistantIdsRef = useRef(new Set());
   const navigate = useNavigate();
+
 
   const [authUser, setAuthUser] = useState(() => {
     try {
@@ -75,23 +221,6 @@ const Dashboard = () => {
     window.dispatchEvent(new Event("theme-changed"));
   };
 
-  const autoResizePromptTextarea = (textarea) => {
-    if (!textarea) {
-      return;
-    }
-
-    const maxHeight = 84;
-    textarea.style.height = "auto";
-    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
-    textarea.style.height = `${nextHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
-  };
-
-  const handlePromptChange = (event) => {
-    setPrompt(event.target.value);
-    autoResizePromptTextarea(event.target);
-  };
-
   useEffect(() => {
     let isMounted = true;
 
@@ -134,10 +263,6 @@ const Dashboard = () => {
 
     container.scrollTop = container.scrollHeight;
   }, [messages, isSending, isChatView]);
-
-  useEffect(() => {
-    autoResizePromptTextarea(promptTextareaRef.current);
-  }, [prompt, isChatView]);
 
   const handleFilePickerOpen = () => {
     if (isSending) {
@@ -423,7 +548,9 @@ const Dashboard = () => {
       const strengths = Array.isArray(parsed.strengths) ? parsed.strengths : [];
       const weaknesses = Array.isArray(parsed.weaknesses) ? parsed.weaknesses : [];
       const improvements = Array.isArray(parsed.actionableImprovements) ? parsed.actionableImprovements : [];
-      const nextSteps = Array.isArray(parsed.nextSteps) ? parsed.nextSteps : [];
+      const nextSteps = Array.isArray(parsed.nextSteps)
+        ? normalizeNextSteps(parsed.nextSteps).slice(0, 5)
+        : [];
 
       const roleReadiness =
         parsed.roleReadiness && typeof parsed.roleReadiness === "object"
@@ -938,18 +1065,18 @@ const Dashboard = () => {
     };
   }, [typingMessageId, messages]);
 
-  const handleSubmit = async (event) => {
+  const handleSubmit = async (event, submittedPrompt) => {
     event.preventDefault();
 
     if (isFileLimitReached) {
       window.alert("This chat already has 10 files. Please start a new chat.");
-      return;
+      return false;
     }
 
-    const cleanPrompt = prompt.trim();
+    const cleanPrompt = submittedPrompt.trim();
     const hasFile = Boolean(selectedResumeFile);
     if ((!cleanPrompt && !hasFile) || isSending) {
-      return;
+      return false;
     }
 
     setIsSending(true);
@@ -1034,9 +1161,9 @@ const Dashboard = () => {
         navigate(`/c/${ensuredChatId}`);
       }
 
-      setPrompt("");
       clearSelectedFile();
       window.dispatchEvent(new Event("chats-changed"));
+      return true;
     } catch (error) {
       const serverMessage =
         error?.response?.data?.message || error?.message || "Failed to process request";
@@ -1048,6 +1175,7 @@ const Dashboard = () => {
       }
 
       console.error("Chat request failed:", error?.response?.data || error.message);
+      return false;
     } finally {
       setIsUploadingFile(false);
       setUploadPercent(0);
@@ -1079,48 +1207,16 @@ const Dashboard = () => {
             Ashutosh Kumar Yadav.
           </h1>
 
-          <form
+          <ChatComposer
+            isChatView={false}
+            isSending={isSending}
+            isFileLimitReached={false}
+            fileInputRef={fileInputRef}
+            onFilePickerOpen={handleFilePickerOpen}
+            onFileSelect={handleFileSelect}
+            renderSelectedFileChip={renderSelectedFileChip}
             onSubmit={handleSubmit}
-            className="mt-8 flex w-full items-center rounded-full border border-gray-200/80 bg-white/85 px-4 py-2 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)] backdrop-blur-md dark:border-white/10 dark:bg-white/8 sm:px-5 sm:py-3"
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="application/pdf,.pdf"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-
-            <button
-              type="button"
-              onClick={handleFilePickerOpen}
-              className="mr-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-700 transition hover:bg-gray-100 dark:text-white/90 dark:hover:bg-white/10"
-              aria-label="Add"
-              title="Attach File"
-            >
-              <IoAdd size={24} />
-            </button>
-
-            {renderSelectedFileChip()}
-
-            <textarea
-              ref={promptTextareaRef}
-              value={prompt}
-              onChange={handlePromptChange}
-              placeholder="Check resume, Analyse resume, Give job description"
-              rows={1}
-              className="max-h-21 min-h-10 flex-1 resize-none overflow-y-auto bg-transparent py-2 text-base leading-6 text-gray-800 placeholder:text-gray-500 focus:outline-none dark:text-white/90 dark:placeholder:text-white/45"
-            />
-
-            <button
-              type="submit"
-              className="ml-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-r from-purple-500 to-blue-500 text-white transition hover:from-purple-600 hover:to-blue-600"
-              aria-label="Send"
-              title="Send Message"
-            >
-              <IoSend size={18} />
-            </button>
-          </form>
+          />
         </div>
       ) : (
         <div className="relative mx-auto flex h-full w-full max-w-5xl flex-col">
@@ -1208,57 +1304,18 @@ const Dashboard = () => {
               </button>
             </div>
           ) : (
-            <form
+            <>
+            <ChatComposer
+              isChatView
+              isSending={isSending}
+              isFileLimitReached={isFileLimitReached}
+              fileInputRef={fileInputRef}
+              onFilePickerOpen={handleFilePickerOpen}
+              onFileSelect={handleFileSelect}
+              renderSelectedFileChip={renderSelectedFileChip}
               onSubmit={handleSubmit}
-              className="sticky bottom-0 mt-4 flex w-full items-center rounded-full border border-gray-200/80 bg-white/90 px-4 py-2 shadow-[0_10px_30px_-18px_rgba(59,130,246,0.55)] backdrop-blur-md dark:border-white/10 dark:bg-white/8 sm:px-5 sm:py-3"
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-
-              <button
-                type="button"
-                onClick={handleFilePickerOpen}
-                className="mr-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-gray-700 transition hover:bg-gray-100 dark:text-white/90 dark:hover:bg-white/10"
-                aria-label="Add"
-                title="Attach File"
-              >
-                <IoAdd size={24} />
-              </button>
-
-              {renderSelectedFileChip()}
-
-              <textarea
-                ref={promptTextareaRef}
-                value={prompt}
-                onChange={handlePromptChange}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    if (!isSending) {
-                      e.currentTarget.closest("form").requestSubmit();
-                    }
-                  }
-                }}
-                placeholder="Type your message"
-                rows={1}
-                className="max-h-21 min-h-10 flex-1 resize-none overflow-y-auto bg-transparent py-2 text-base leading-6 text-gray-800 placeholder:text-gray-500 focus:outline-none dark:text-white/90 dark:placeholder:text-white/45"
-              />
-
-              <button
-                type="submit"
-                className="ml-3 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-r from-purple-500 to-blue-500 text-white transition hover:from-purple-600 hover:to-blue-600 disabled:opacity-60"
-                aria-label="Send"
-                disabled={isSending}
-                title="Send Message"
-              >
-                <IoSend size={18} />
-              </button>
-            </form>
+            />
+            </>
           )}
         </div>
       )}

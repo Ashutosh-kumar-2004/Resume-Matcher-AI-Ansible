@@ -8,6 +8,8 @@ import {
   MAX_RESUME_TEXT_CHARS,
   MAX_JOB_DESCRIPTION_CHARS,
   MAX_CHAT_MESSAGE_CHARS,
+  GROQ_REQUEST_TIMEOUT_MS,
+  ANALYSIS_TIMEOUT_MS,
   GENERIC_PHRASES,
   TECH_HINT_CANDIDATES,
   SYSTEM_PROMPT_FOR_GROQ_AI,
@@ -61,6 +63,8 @@ const getGroqClient = () => {
 
   const client = new Groq({
     apiKey: process.env.GROQ_API_KEY,
+    maxRetries: 0,
+    timeout: GROQ_REQUEST_TIMEOUT_MS,
   });
 
   return {
@@ -73,20 +77,20 @@ const getCandidateModels = (preferredModel) => {
   const candidates = [
     preferredModel,
     'openai/gpt-oss-20b',
-    'qwen/qwen3.8-27b',
-    'openai/gpt-oss-120b',
     'llama-3.1-8b-instant',
-    'llama-3.3-70b-versatile',
-    'mixtral-8x7b-32768',
   ].filter(Boolean);
 
-  return [...new Set(candidates)];
+  return [...new Set(candidates)].slice(0, 2);
 };
 
 const isModelUnavailableError = (error) => {
+  const status = Number(error?.status || error?.statusCode);
   const message = String(error?.message || '').toLowerCase();
+  if (status && status !== 400 && status !== 404) {
+    return false;
+  }
+
   return (
-    message.includes('model') ||
     message.includes('does not exist') ||
     message.includes('not found') ||
     message.includes('decommissioned') ||
@@ -97,23 +101,64 @@ const isModelUnavailableError = (error) => {
   );
 };
 
-const generateWithFallbackModels = async ({ client, preferredModel, prompt }) => {
+const isTransientGroqError = (error) => {
+  const status = Number(error?.status || error?.statusCode);
+  return (
+    status === 408 ||
+    status === 409 ||
+    status === 429 ||
+    status >= 500 ||
+    error?.name === 'APIConnectionError' ||
+    error?.name === 'APIConnectionTimeoutError'
+  );
+};
+
+const createAbortSignal = (timeoutMs) => {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  return {
+    controller,
+    didTimeout: () => timedOut,
+    cleanup: () => clearTimeout(timer),
+  };
+};
+
+const generateWithFallbackModels = async ({ client, preferredModel, prompt, deadline }) => {
   const candidates = getCandidateModels(preferredModel);
   const errors = [];
 
   for (const modelName of candidates) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error('Resume analysis exceeded its processing deadline');
+    }
+
+    const requestTimeoutMs = Math.min(GROQ_REQUEST_TIMEOUT_MS, remainingMs);
+    const { controller, didTimeout, cleanup } = createAbortSignal(requestTimeoutMs);
+
     try {
-      const completion = await client.chat.completions.create({
-        model: modelName,
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-      });
+      const completion = await client.chat.completions.create(
+        {
+          model: modelName,
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+          messages: [
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+        },
+        {
+          maxRetries: 0,
+          timeout: requestTimeoutMs,
+          signal: controller.signal,
+        },
+      );
 
       const responseText = completion?.choices?.[0]?.message?.content;
 
@@ -126,15 +171,26 @@ const generateWithFallbackModels = async ({ client, preferredModel, prompt }) =>
         responseText,
       };
     } catch (error) {
+      if (didTimeout()) {
+        throw new Error(`Groq request timed out for model ${modelName}`);
+      }
+
       errors.push({ model: modelName, message: error.message });
 
       if (!isModelUnavailableError(error)) {
+        if (isTransientGroqError(error)) {
+          const transientError = new Error(`Groq request failed temporarily for model ${modelName}`);
+          transientError.status = 503;
+          throw transientError;
+        }
         throw error;
       }
+    } finally {
+      cleanup();
     }
   }
 
-  const failureSummary = errors.map((entry) => `${entry.model}: ${entry.message}`).join(' | ');
+  const failureSummary = errors.map((entry) => `${entry.modelName}: ${entry.message}`).join(' | ');
   throw new Error(
     `No available Groq model worked for chat.completions. Set GROQ_MODEL in server/.env. Attempts: ${failureSummary}`
   );
@@ -434,6 +490,9 @@ const ensureChatIdForStorage = async ({ userId, chatId, message, mode }) => {
 // @route   POST /api/resume/analyze
 // @access  Private
 export const analyzeResume = async (req, res) => {
+  const startedAt = Date.now();
+  const analysisDeadline = startedAt + ANALYSIS_TIMEOUT_MS;
+
   try {
     const message = cleanAndLimitText(req.body.message, MAX_CHAT_MESSAGE_CHARS);
     const jobDescription = cleanAndLimitText(req.body.jobDescription, MAX_JOB_DESCRIPTION_CHARS);
@@ -496,6 +555,7 @@ export const analyzeResume = async (req, res) => {
       client,
       preferredModel,
       prompt,
+      deadline: analysisDeadline,
     });
     const parsed = extractJsonObject(responseText);
 
@@ -540,6 +600,7 @@ export const analyzeResume = async (req, res) => {
         client,
         preferredModel,
         prompt: repairPrompt,
+        deadline: analysisDeadline,
       });
 
       const repairedParsed = extractJsonObject(repaired.responseText);
@@ -614,9 +675,31 @@ export const analyzeResume = async (req, res) => {
       },
     });
   } catch (error) {
-    return res.status(500).json({
+    const status = error?.name === 'APIConnectionTimeoutError' ||
+      error?.message?.includes('processing deadline') ||
+      error?.message?.includes('request timed out')
+      ? 504
+      : error?.status === 429 || error?.status === 503
+      ? 503
+      : 500;
+
+    console.error('[resume/analyze] request failed', {
+      durationMs: Date.now() - startedAt,
+      status,
+      errorName: error?.name || 'Error',
+      message: error?.message || 'Unknown error',
+      userId: req.user?.id ? 'authenticated' : 'unknown',
+      hasFile: Boolean(req.file),
+    });
+
+    return res.status(status).json({
       success: false,
-      message: error.message,
+      message:
+        status === 504
+          ? 'Resume analysis timed out. Please try again with a shorter PDF.'
+          : status === 503
+          ? 'Resume analysis is temporarily unavailable. Please try again shortly.'
+          : error.message,
     });
   }
 };
