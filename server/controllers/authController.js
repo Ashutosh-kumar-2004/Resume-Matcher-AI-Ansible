@@ -15,8 +15,11 @@ const getCookieOptions = () => ({
     Date.now() + Number(process.env.JWT_COOKIE_EXPIRE || 7) * 24 * 60 * 60 * 1000
   ),
   httpOnly: true,
-  secure: isProduction,
-  sameSite: isProduction ? 'none' : 'lax',
+  secure: process.env.COOKIE_SECURE === undefined
+  ? isProduction
+  : process.env.COOKIE_SECURE === 'true',
+
+sameSite: process.env.COOKIE_SAME_SITE || (isProduction ? 'none' : 'lax'),
   path: '/',
 });
 
@@ -147,11 +150,13 @@ export const login = async (req, res) => {
 // @access  Private
 export const logout = async (req, res) => {
   res.clearCookie('jwt', {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax',
-    path: '/',
-  });
+  httpOnly: true,
+  secure: process.env.COOKIE_SECURE === undefined
+    ? isProduction
+    : process.env.COOKIE_SECURE === 'true',
+  sameSite: process.env.COOKIE_SAME_SITE || (isProduction ? 'none' : 'lax'),
+  path: '/',
+});
 
   res.status(200).json({
     success: true,

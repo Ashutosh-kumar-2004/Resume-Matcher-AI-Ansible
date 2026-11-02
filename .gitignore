@@ -58,3 +58,7 @@ Desktop.ini
 
 # Optional archives/uploads
 uploads/
+
+# Ansible local inventory and secrets
+inventory.ini
+*.pem
