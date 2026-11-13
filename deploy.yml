@@ -1,0 +1,54 @@
+---
+- name: Deploy Resume Matcher AI on EC2
+  hosts: app_servers
+  become: true
+
+  vars:
+    app_dir: /home/ubuntu/resume-matcher-app
+
+  tasks:
+    - name: Install Git
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+
+    - name: Ensure application directory exists
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Clone or update application repository
+      become_user: ubuntu
+      ansible.builtin.git:
+        repo: https://github.com/Ashutosh-kumar-2004/Resume-Matcher-AI-Ansible.git
+        dest: "{{ app_dir }}"
+        version: feature/puppet-integration
+        update: true
+
+    - name: Copy production environment file
+      ansible.builtin.copy:
+        src: server/.env
+        dest: "{{ app_dir }}/server/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+
+    - name: Build and start Docker containers
+      become_user: ubuntu
+      ansible.builtin.command:
+        cmd: docker compose up -d --build
+        chdir: "{{ app_dir }}"
+
+    - name: Wait for application health endpoint
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/health
+        method: GET
+        status_code: 200
+      register: health_check
+      retries: 15
+      delay: 10
+      until: health_check.status == 200
